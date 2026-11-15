@@ -113,6 +113,7 @@ dialog .acts{display:flex;gap:8px;justify-content:flex-end}
     <span class="sep"></span>
     <button data-a="box" title="체크박스">□</button>
     <button data-a="sym" title="즐겨찾는 기호">★</button>
+    <button data-a="save" title="저장 (Ctrl+S)" style="font-weight:800;border:2px solid #374151;border-radius:8px">저장</button>
     <span class="sep"></span>
     <button data-a="undo" title="되돌리기 (Ctrl+Z)">↶</button>
     <button data-a="redo" title="다시 실행 (Ctrl+Y)">↷</button>
@@ -207,24 +208,36 @@ async function encryptPayload(key, payload) {
 let tokenClient = null, token = null, tokenExp = 0, accountEmail = "";
 function gsiReady() { return window.google && google.accounts && google.accounts.oauth2; }
 function waitGsi() { return new Promise((res, rej) => { let n = 0; const t = setInterval(() => { if (gsiReady()) { clearInterval(t); res(); } else if (++n > 100) { clearInterval(t); rej(new Error("Google 로그인 스크립트를 불러오지 못했어요 (인터넷 연결 확인)")); } }, 100); }); }
-function getToken(interactive) {
-  if (token && Date.now() < tokenExp - 60000) return Promise.resolve(token);
+/* 로그인 유지: 토큰(1시간짜리)을 이 기기에 보관해 새로고침해도 이어 쓰고, 만료되면 조용히 갱신을 시도한다.
+   (정적 웹앱은 Google이 주는 갱신용 토큰을 가질 수 없어서, 조용한 갱신이 막히면 화면을 한 번 누르는 것으로 이어진다) */
+function saveSession() { try { localStorage.setItem("medex_signed", "1"); localStorage.setItem("medex_tok", JSON.stringify({ t: token, exp: tokenExp, email: accountEmail })); } catch (_) {} }
+function loadSession() { try { const o = JSON.parse(localStorage.getItem("medex_tok") || "null"); if (o && o.email) accountEmail = o.email; return o; } catch (_) { return null; } }
+function requestToken(prompt) {
   return new Promise(async (res, rej) => {
     try {
       await waitGsi();
       const id = window.MEDEX_CLIENT_ID || "";
       if (!id || id.startsWith("여기에")) throw new Error("config.js에 웹 클라이언트 ID를 먼저 입력해야 해요 (README 참고)");
       if (!tokenClient) tokenClient = google.accounts.oauth2.initTokenClient({ client_id: id, scope: SCOPE, callback: () => {} });
-      tokenClient.callback = r => { if (r.error) return rej(new Error(r.error_description || r.error)); token = r.access_token; tokenExp = Date.now() + (r.expires_in || 3600) * 1000; res(token); };
+      tokenClient.callback = r => { if (r.error) return rej(new Error(r.error_description || r.error)); token = r.access_token; tokenExp = Date.now() + (r.expires_in || 3600) * 1000; saveSession(); res(token); };
       tokenClient.error_callback = e => rej(new Error(e && e.type === "popup_closed" ? "로그인이 취소됐어요" : "로그인하지 못했어요 (" + (e && e.type || "오류") + ")"));
-      tokenClient.requestAccessToken({ prompt: interactive ? "select_account" : "" });
+      const o = { prompt }; if (accountEmail) o.hint = accountEmail;
+      tokenClient.requestAccessToken(o);
     } catch (e) { rej(e); }
   });
 }
+function tokenOk(margin = 60000) { return !!token && Date.now() < tokenExp - margin; }
+function getToken(interactive) {
+  if (tokenOk()) return Promise.resolve(token);
+  if (interactive) return requestToken(accountEmail ? "" : "select_account");
+  return requestToken("none");  // 화면 없이 조용히 갱신 (실패하면 호출한 쪽이 '이어서 로그인' 화면을 보여준다)
+}
+// 만료 5분 전부터 미리 조용히 갱신 (실패해도 아직 쓸 수 있는 토큰은 그대로 둔다)
+setInterval(() => { if (token && !document.hidden && !tokenOk(5 * 60000)) requestToken("none").catch(() => {}); }, 30000);
 async function api(url, opt = {}, retry = true) {
-  const t = await getToken(false);
+  let t; try { t = await getToken(false); } catch (e) { if (navigator.onLine) needResume(); throw new Error("로그인이 잠시 풀렸어요. 화면을 한 번 누르면 이어져요"); }
   const r = await fetch(url, { ...opt, headers: { ...(opt.headers || {}), Authorization: "Bearer " + t } });
-  if (r.status === 401 && retry) { token = null; return api(url, opt, false); }
+  if (r.status === 401 && retry) { token = null; tokenExp = 0; return api(url, opt, false); }
   if (!r.ok) throw new Error("Drive 오류 " + r.status);
   return r;
 }
@@ -467,6 +480,7 @@ $("#tools").addEventListener("click", e => {
   else if (a === "underline") { document.execCommand("styleWithCSS", false, true); document.execCommand("underline"); markDirty(); }
   else if (a === "color") $("#pal").classList.toggle("on");
   else if (a === "box") { document.execCommand("insertText", false, BOX_OFF + " "); updateStrike(); markDirty(); }
+  else if (a === "save") saveNow(false);
   else if (a === "undo") { document.execCommand("undo"); ensureSentinel(); updateStrike(); markDirty(); }
   else if (a === "redo") { document.execCommand("redo"); ensureSentinel(); updateStrike(); markDirty(); }
 });
@@ -753,7 +767,8 @@ $("#trBack").onclick = () => history.back();
 function logout() {
   if (token && gsiReady()) try { google.accounts.oauth2.revoke(token, () => {}); } catch (_) {}
   token = null; tokenExp = 0; accountEmail = ""; S.data = null; S.cur = null;
-  try { localStorage.removeItem("medex_signed"); localStorage.removeItem("medex_draft"); } catch (_) {}
+  try { localStorage.removeItem("medex_signed"); localStorage.removeItem("medex_draft"); localStorage.removeItem("medex_tok"); } catch (_) {}
+  resuming = false; $("#btnLogin").textContent = "Google 계정으로 로그인";
   show("login");
 }
 
@@ -859,13 +874,30 @@ window.addEventListener("online", pollRemote);
 
 /* ===== 로그인 / 로그아웃 ===== */
 async function afterLogin() {
-  try { const u = await (await api("https://www.googleapis.com/oauth2/v3/userinfo")).json(); accountEmail = u.email || ""; } catch (_) {}
-  try { localStorage.setItem("medex_signed", "1"); } catch (_) {}
+  try { const u = await (await api("https://www.googleapis.com/oauth2/v3/userinfo")).json(); accountEmail = u.email || accountEmail; } catch (_) {}
+  saveSession();
   show("listScr"); await refreshList(false);
 }
+/* 토큰이 만료됐는데 조용한 갱신이 막힌 경우: 로그아웃이 아니라 '이어서 로그인' 화면. 화면 아무 곳이나 누르면 바로 이어진다. */
+let resuming = false;
+function needResume() {
+  if (resuming) return; resuming = true;
+  const dirtyNow = dirty;
+  if (!S.cur) show("login");  // 편집 중이면 화면은 그대로 두고 아래 안내만 띄운다
+  say(S.cur ? "#edMsg" : "#loginMsg", "로그인이 잠시 풀렸어요. 화면을 한 번 누르면 이어져요" + (dirtyNow ? " (쓰던 내용은 그대로예요)" : ""), true);
+  $("#btnLogin").textContent = "이어서 로그인";
+  const go = async () => {
+    document.removeEventListener("click", go, true);
+    try { await requestToken(""); resuming = false; $("#btnLogin").textContent = "Google 계정으로 로그인"; say("#loginMsg", "");
+      if (S.cur) { say("#edMsg", ""); if (dirty) saveNow(true); } else await afterLogin(); }
+    catch (e) { resuming = false; say(S.cur ? "#edMsg" : "#loginMsg", (e.message || "로그인하지 못했어요") + " — 다시 한 번 눌러 주세요", true); needResume(); }
+  };
+  setTimeout(() => document.addEventListener("click", go, true), 0);
+}
 $("#btnLogin").onclick = async () => {
+  if (resuming) return;  // '이어서 로그인'은 화면 누르기 처리기가 맡는다
   say("#loginMsg", "");
-  try { await getToken(true); await afterLogin(); } catch (e) { say("#loginMsg", e.message || String(e), true); }
+  try { await requestToken(accountEmail ? "" : "select_account"); await afterLogin(); } catch (e) { say("#loginMsg", e.message || String(e), true); }
 };
 document.addEventListener("visibilitychange", () => { if (document.hidden && dirty) saveNow(false); });
 window.addEventListener("pagehide", () => { if (dirty) saveNow(false); });
@@ -873,8 +905,10 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
 (async () => {
   let signed = false; try { signed = localStorage.getItem("medex_signed") === "1"; } catch (_) {}
   if (!signed) return;
+  const o = loadSession();
   say("#loginMsg", "로그인 확인 중…");
-  try { await getToken(false); await afterLogin(); } catch (e) { say("#loginMsg", "다시 로그인해 주세요"); }
+  if (o && o.t && o.exp > Date.now() + 60000) { token = o.t; tokenExp = o.exp; }  // 아직 유효한 토큰이면 그대로 이어서 사용
+  try { await getToken(false); await afterLogin(); } catch (e) { needResume(); }
 })();
 window.__medex = { logout,  serialize, renderBody, S, crc32, unlockKey, decryptPayload, encryptPayload, updateStrike };
 </script>
