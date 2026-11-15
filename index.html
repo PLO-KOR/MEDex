@@ -113,7 +113,6 @@ dialog .acts{display:flex;gap:8px;justify-content:flex-end}
     <span class="sep"></span>
     <button data-a="box" title="체크박스">□</button>
     <button data-a="sym" title="즐겨찾는 기호">★</button>
-    <button data-a="save" title="저장 (Ctrl+S)" style="font-weight:800;border:0;background:transparent">저장</button>
     <span class="sep"></span>
     <button data-a="undo" title="되돌리기 (Ctrl+Z)">↶</button>
     <button data-a="redo" title="다시 실행 (Ctrl+Y)">↷</button>
@@ -433,9 +432,22 @@ body.addEventListener("beforeinput", e => {
   }
 });
 body.addEventListener("input", () => { ensureSentinel(); updateStrike(); markDirty(); });
+/* 체크박스를 누르면 글자 입력 커서/키보드가 뜨지 않고 체크만 바뀐다 (터치는 touchend에서 처리하고 기본 동작을 막아 포커스를 주지 않는다) */
+function toggleBox(hit) { hit.node.replaceData(hit.off, 1, hit.node.data[hit.off] === BOX_ON ? BOX_OFF : BOX_ON); updateStrike(); markDirty(); }
+let tstart = null;
+body.addEventListener("touchstart", e => { const t = e.touches[0]; tstart = { x: t.clientX, y: t.clientY, n: e.touches.length }; }, { passive: true });
+body.addEventListener("touchend", e => {
+  const st = tstart; tstart = null;
+  if (!st || st.n > 1 || !e.changedTouches.length) return;
+  const t = e.changedTouches[0];
+  if (Math.hypot(t.clientX - st.x, t.clientY - st.y) > 10) return;  // 스크롤/드래그는 제외
+  const hit = boxAt(t.clientX, t.clientY);
+  if (hit) { e.preventDefault(); toggleBox(hit); }
+}, { passive: false });
+body.addEventListener("mousedown", e => { if (boxAt(e.clientX, e.clientY)) e.preventDefault(); });  // 마우스로 눌러도 포커스 이동 없음
 body.addEventListener("click", e => {
   const hit = boxAt(e.clientX, e.clientY);
-  if (hit) { hit.node.replaceData(hit.off, 1, hit.node.data[hit.off] === BOX_ON ? BOX_OFF : BOX_ON); updateStrike(); markDirty(); e.preventDefault(); }
+  if (hit) { toggleBox(hit); e.preventDefault(); }
 });
 function boxAt(x, y) {
   let r = null;
@@ -480,7 +492,6 @@ $("#tools").addEventListener("click", e => {
   else if (a === "underline") { document.execCommand("styleWithCSS", false, true); document.execCommand("underline"); markDirty(); }
   else if (a === "color") $("#pal").classList.toggle("on");
   else if (a === "box") { document.execCommand("insertText", false, BOX_OFF + " "); updateStrike(); markDirty(); }
-  else if (a === "save") saveNow(false);
   else if (a === "undo") { document.execCommand("undo"); ensureSentinel(); updateStrike(); markDirty(); }
   else if (a === "redo") { document.execCommand("redo"); ensureSentinel(); updateStrike(); markDirty(); }
 });
