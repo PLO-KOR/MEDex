@@ -760,12 +760,7 @@ function renderSettings() {
     sel.value = d.lang || "ko"; sel.onchange = () => setSetting({ lang: sel.value });
     sec("언어", mkEl("label", {}, "언어 선택", sel));
   } else if (setCat === "ui") {
-    const op = mkEl("input", { type: "range", id: "set_opacity", min: 10, max: 100, value: d.opacity || 100 });
-    const ol = mkEl("span", { textContent: op.value + "%" }); op.oninput = () => { ol.textContent = op.value + "%"; }; op.onchange = () => setSetting({ opacity: +op.value });
-    const tl = mkEl("div");
-    for (const [up, t] of [[false, "90도 회전"], [true, "정방향"]]) { const l = document.createElement("label"), r = document.createElement("input"); r.type = "radio"; r.name = "tu"; r.id = "set_tu_" + up; r.checked = !!d.tab_upright === up; r.onchange = () => setSetting({ tab_upright: up }); l.append(r, t); tl.append(l); }
-    sec("화면 (일부는 PC에 적용돼요)", check("체크박스에 체크 시 선 긋기", d.strike_done !== false, "strike_done"),
-      mkEl("div", { textContent: "인덱스 · 메모창 불투명도 (PC)" }), mkEl("label", {}, op, ol), mkEl("div", { textContent: "인덱스 제목 표시 (PC)" }), tl);
+    sec("화면", check("체크박스에 체크 시 선 긋기", d.strike_done !== false, "strike_done"));
     const chips = mkEl("div", { className: "chips" }), syms = d.symbols || [], saveSyms = l => setSetting({ symbols: l });
     syms.forEach((sy, k) => {
       const c = mkEl("span", { className: "chip" }, sy), mk = (t, f) => mkEl("button", { textContent: t, onclick: f });
