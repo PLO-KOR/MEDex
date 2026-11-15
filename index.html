@@ -34,6 +34,7 @@ header.bar h1{font-size:18px;margin:0;flex:1;white-space:nowrap;overflow:hidden;
 .row .more:active{background:rgba(0,0,0,.08)}
 .page{overflow:auto;flex:1;padding:6px 14px 40px}
 .sec{background:#fff;border-radius:14px;padding:14px;margin:10px 0;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.cats{display:flex;gap:6px;overflow-x:auto;padding:2px 0}.cats button{flex:1;white-space:nowrap;border:0;border-radius:10px;padding:9px 12px;font-size:15px;background:#e7e8f3;color:var(--sub)}.cats button.on{background:var(--acc);color:#fff;font-weight:700}.sec select{margin-left:auto;font-size:16px;padding:4px 6px}
 .sec h4{margin:0 0 10px;font-size:14px;color:var(--sub);font-weight:600}
 .sec label{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:16px}
 .sec input[type=checkbox]{width:22px;height:22px}
@@ -743,34 +744,50 @@ async function setSetting(patch) {
   try { await commit(d => Object.assign(d, patch)); } catch (e) { say("#setMsg", e.message, true); }
   renderSettings(); updateStrike();
 }
+const M_VERSION = "1.0.0", M_UPDATED = "2026. 11. 16.", CONTACT = "emailofplo@gmail.com", EDGE_CHOICES = [16, 18, 20];
+const SET_CATS = [["gen", "일반"], ["ui", "UI"], ["save", "저장"], ["trash", "휴지통"], ["info", "정보"]];
+let setCat = "gen";
 function renderSettings() {
   const b = $("#setBody"), d = S.data || {}; b.textContent = "";
-  const sec = (h, ...kids) => { const x = document.createElement("div"); x.className = "sec"; const t = document.createElement("h4"); t.textContent = h; x.append(t, ...kids); b.append(x); return x; };
+  const mkEl = (t, props, ...kids) => { const x = document.createElement(t); Object.assign(x, props || {}); x.append(...kids); return x; };
+  const bar = mkEl("div", { className: "cats", id: "setCats" });
+  for (const [k, t] of SET_CATS) { const c = mkEl("button", { textContent: t, id: "cat_" + k, className: k === setCat ? "on" : "" }); c.onclick = () => { setCat = k; renderSettings(); }; bar.append(c); }
+  b.append(bar);
+  const sec = (h, ...kids) => { const x = mkEl("div", { className: "sec" }); if (h) x.append(mkEl("h4", { textContent: h })); x.append(...kids); b.append(x); return x; };
   const check = (label, val, key) => { const l = document.createElement("label"), c = document.createElement("input"); c.type = "checkbox"; c.id = "set_" + key; c.checked = val; c.onchange = () => setSetting({ [key]: c.checked }); l.append(c, label); return l; };
-  const ac = document.createElement("div"); ac.textContent = accountEmail ? "연결 중인 Google 계정: " + accountEmail : "Google 계정으로 로그인됨";
-  const out = document.createElement("button"); out.className = "btn"; out.id = "btnLogout"; out.textContent = "로그아웃"; out.style.marginTop = "10px"; out.onclick = logout;
-  sec("계정", ac, out);
-  sec("저장", check("자동 저장 (끄면 '저장' 버튼으로만 저장)", d.autosave !== false, "autosave"), check("체크박스에 체크 시 선 긋기", d.strike_done !== false, "strike_done"));
-  const op = document.createElement("input"); op.type = "range"; op.id = "set_opacity"; op.min = 10; op.max = 100; op.value = d.opacity || 100;
-  const ol = document.createElement("span"); ol.textContent = op.value + "%"; op.oninput = () => { ol.textContent = op.value + "%"; }; op.onchange = () => setSetting({ opacity: +op.value });
-  const orow = document.createElement("label"); orow.append(op, ol);
-  const tl = document.createElement("div");
-  for (const [up, t] of [[false, "90도 회전"], [true, "정방향"]]) { const l = document.createElement("label"), r = document.createElement("input"); r.type = "radio"; r.name = "tu"; r.id = "set_tu_" + up; r.checked = !!d.tab_upright === up; r.onchange = () => setSetting({ tab_upright: up }); l.append(r, t); tl.append(l); }
-  sec("PC 화면 설정 (PC의 인덱스·메모창에 적용돼요)", Object.assign(document.createElement("div"), { textContent: "불투명도" }), orow, Object.assign(document.createElement("div"), { textContent: "인덱스 제목 표시" }), tl);
-  const chips = document.createElement("div"); chips.className = "chips";
-  const syms = d.symbols || [];
-  const saveSyms = l => setSetting({ symbols: l });
-  syms.forEach((sy, k) => {
-    const c = document.createElement("span"); c.className = "chip"; c.append(sy);
-    const mk = (t, f) => { const x = document.createElement("button"); x.textContent = t; x.onclick = f; return x; };
-    c.append(mk("◀", () => { if (k > 0) { const l = [...syms]; [l[k - 1], l[k]] = [l[k], l[k - 1]]; saveSyms(l); } }), mk("▶", () => { if (k < syms.length - 1) { const l = [...syms]; [l[k + 1], l[k]] = [l[k], l[k + 1]]; saveSyms(l); } }), mk("✕", () => saveSyms(syms.filter((_, j) => j !== k))));
-    chips.append(c);
-  });
-  const ad = document.createElement("button"); ad.className = "btn"; ad.id = "btnAddSym"; ad.textContent = "＋ 기호 등록"; ad.style.marginTop = "10px"; ad.onclick = async () => { await addSymbol(); renderSettings(); };
-  sec("즐겨찾는 기호", chips, ad);
-  const tb = document.createElement("button"); tb.className = "btn"; tb.id = "btnTrash"; tb.textContent = "휴지통 열기 (" + (d.trash || []).length + "개)"; tb.onclick = () => { renderTrash(); push("trashScr"); };
-  sec("휴지통", tb);
-  const m = document.createElement("div"); m.id = "setMsg"; m.className = "msg"; b.append(m);
+  if (setCat === "gen") {
+    const sel = mkEl("select", { id: "set_lang" }); for (const [c, n] of [["ko", "한국어"]]) sel.append(mkEl("option", { value: c, textContent: n }));
+    sel.value = d.lang || "ko"; sel.onchange = () => setSetting({ lang: sel.value });
+    sec("언어", mkEl("label", {}, "언어 선택", sel));
+  } else if (setCat === "ui") {
+    const on = d.edge_gap !== false, px = EDGE_CHOICES.includes(+d.edge_px) ? +d.edge_px : 18;
+    const es = mkEl("select", { id: "set_edge_px", disabled: !on }); for (const v of EDGE_CHOICES) es.append(mkEl("option", { value: v, textContent: v + "px" }));
+    es.value = px; es.onchange = () => setSetting({ edge_px: +es.value });
+    const op = mkEl("input", { type: "range", id: "set_opacity", min: 10, max: 100, value: d.opacity || 100 });
+    const ol = mkEl("span", { textContent: op.value + "%" }); op.oninput = () => { ol.textContent = op.value + "%"; }; op.onchange = () => setSetting({ opacity: +op.value });
+    const tl = mkEl("div");
+    for (const [up, t] of [[false, "90도 회전"], [true, "정방향"]]) { const l = document.createElement("label"), r = document.createElement("input"); r.type = "radio"; r.name = "tu"; r.id = "set_tu_" + up; r.checked = !!d.tab_upright === up; r.onchange = () => setSetting({ tab_upright: up }); l.append(r, t); tl.append(l); }
+    sec("화면 (일부는 PC에 적용돼요)", check("체크박스에 체크 시 선 긋기", d.strike_done !== false, "strike_done"), check("스크롤바가 있는 창에서는 화면 끝에서 띄우기 (PC)", on, "edge_gap"), mkEl("label", {}, "띄우는 거리 (PC)", es),
+      mkEl("div", { textContent: "인덱스 · 메모창 불투명도 (PC)" }), mkEl("label", {}, op, ol), mkEl("div", { textContent: "인덱스 제목 표시 (PC)" }), tl);
+    const chips = mkEl("div", { className: "chips" }), syms = d.symbols || [], saveSyms = l => setSetting({ symbols: l });
+    syms.forEach((sy, k) => {
+      const c = mkEl("span", { className: "chip" }, sy), mk = (t, f) => mkEl("button", { textContent: t, onclick: f });
+      c.append(mk("◀", () => { if (k > 0) { const l = [...syms]; [l[k - 1], l[k]] = [l[k], l[k - 1]]; saveSyms(l); } }), mk("▶", () => { if (k < syms.length - 1) { const l = [...syms]; [l[k + 1], l[k]] = [l[k], l[k + 1]]; saveSyms(l); } }), mk("✕", () => saveSyms(syms.filter((_, j) => j !== k))));
+      chips.append(c);
+    });
+    sec("즐겨찾는 기호", chips, mkEl("button", { className: "btn", id: "btnAddSym", textContent: "＋ 기호 등록", style: "margin-top:10px", onclick: async () => { await addSymbol(); renderSettings(); } }));
+  } else if (setCat === "save") {
+    sec("저장", check("자동 저장 (끄면 '저장' 버튼으로만 저장)", d.autosave !== false, "autosave"));
+  } else if (setCat === "trash") {
+    sec("휴지통", mkEl("button", { className: "btn", id: "btnTrash", textContent: "휴지통 열기 (" + (d.trash || []).length + "개)", onclick: () => { renderTrash(); push("trashScr"); } }));
+  } else {
+    sec("정보", mkEl("div", { id: "info_ver", textContent: "M.version " + M_VERSION + " (최종 업데이트: " + M_UPDATED + ")" }),
+      mkEl("div", { id: "info_contact", textContent: "Contact: " + CONTACT, style: "margin-top:8px" }),
+      mkEl("div", { id: "info_acc", textContent: "연결 중인 Google 계정: " + (accountEmail || "(확인 중)"), style: "margin-top:8px" }),
+      mkEl("div", { id: "info_dir", textContent: "데이터 폴더: Google Drive 앱 데이터 폴더 (MEDex_notes.json)", style: "margin-top:8px" }),
+      mkEl("button", { className: "btn", id: "btnLogout", textContent: "로그아웃", style: "margin-top:12px", onclick: logout }));
+  }
+  b.append(mkEl("div", { id: "setMsg", className: "msg" }));
 }
 $("#btnSet").onclick = () => { renderSettings(); push("setScr"); };
 $("#setBack").onclick = () => history.back();
