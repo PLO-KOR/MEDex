@@ -744,7 +744,7 @@ async function setSetting(patch) {
   try { await commit(d => Object.assign(d, patch)); } catch (e) { say("#setMsg", e.message, true); }
   renderSettings(); updateStrike();
 }
-const M_VERSION = "1.0.0", M_UPDATED = "2026. 11. 16.", CONTACT = "emailofplo@gmail.com", EDGE_CHOICES = [16, 18, 20];
+const M_VERSION = "1.0.0", M_UPDATED = "2026. 11. 16.", CONTACT = "emailofplo@gmail.com";
 const SET_CATS = [["gen", "일반"], ["ui", "UI"], ["save", "저장"], ["trash", "휴지통"], ["info", "정보"]];
 let setCat = "gen";
 function renderSettings() {
@@ -760,14 +760,11 @@ function renderSettings() {
     sel.value = d.lang || "ko"; sel.onchange = () => setSetting({ lang: sel.value });
     sec("언어", mkEl("label", {}, "언어 선택", sel));
   } else if (setCat === "ui") {
-    const on = d.edge_gap !== false, px = EDGE_CHOICES.includes(+d.edge_px) ? +d.edge_px : 18;
-    const es = mkEl("select", { id: "set_edge_px", disabled: !on }); for (const v of EDGE_CHOICES) es.append(mkEl("option", { value: v, textContent: v + "px" }));
-    es.value = px; es.onchange = () => setSetting({ edge_px: +es.value });
     const op = mkEl("input", { type: "range", id: "set_opacity", min: 10, max: 100, value: d.opacity || 100 });
     const ol = mkEl("span", { textContent: op.value + "%" }); op.oninput = () => { ol.textContent = op.value + "%"; }; op.onchange = () => setSetting({ opacity: +op.value });
     const tl = mkEl("div");
     for (const [up, t] of [[false, "90도 회전"], [true, "정방향"]]) { const l = document.createElement("label"), r = document.createElement("input"); r.type = "radio"; r.name = "tu"; r.id = "set_tu_" + up; r.checked = !!d.tab_upright === up; r.onchange = () => setSetting({ tab_upright: up }); l.append(r, t); tl.append(l); }
-    sec("화면 (일부는 PC에 적용돼요)", check("체크박스에 체크 시 선 긋기", d.strike_done !== false, "strike_done"), check("스크롤바가 있는 창에서는 화면 끝에서 띄우기 (PC)", on, "edge_gap"), mkEl("label", {}, "띄우는 거리 (PC)", es),
+    sec("화면 (일부는 PC에 적용돼요)", check("체크박스에 체크 시 선 긋기", d.strike_done !== false, "strike_done"),
       mkEl("div", { textContent: "인덱스 · 메모창 불투명도 (PC)" }), mkEl("label", {}, op, ol), mkEl("div", { textContent: "인덱스 제목 표시 (PC)" }), tl);
     const chips = mkEl("div", { className: "chips" }), syms = d.symbols || [], saveSyms = l => setSetting({ symbols: l });
     syms.forEach((sy, k) => {
