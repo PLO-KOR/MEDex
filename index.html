@@ -99,7 +99,7 @@ dialog .acts{display:flex;gap:8px;justify-content:flex-end}
   <header class="bar">
     <button class="ib" id="btnBack" title="목록">‹</button>
     <input id="title" aria-label="인덱스 이름" maxlength="40">
-    <button class="ib" id="btnSave" title="저장">저장</button>
+    <button class="ib" id="btnSave" title="저장 (Ctrl+S)">저장</button>
     <button class="ib" id="btnMenu" title="더보기">⋯</button>
   </header>
   <div class="tools" id="tools">
@@ -107,15 +107,15 @@ dialog .acts{display:flex;gap:8px;justify-content:flex-end}
     <button data-a="normal" title="기본">가</button>
     <button data-a="large" title="크게" style="font-size:19px">가</button>
     <span class="sep"></span>
-    <button data-a="bold" title="굵게"><b>B</b></button>
-    <button data-a="underline" title="밑줄"><u>U</u></button>
+    <button data-a="bold" title="굵게 (Ctrl+B)"><b>B</b></button>
+    <button data-a="underline" title="밑줄 (Ctrl+U)"><u>U</u></button>
     <button data-a="color" title="글자 색"><span id="colA" style="border-bottom:4px solid #111827">A</span></button>
     <span class="sep"></span>
     <button data-a="box" title="체크박스">□</button>
     <button data-a="sym" title="즐겨찾는 기호">★</button>
     <span class="sep"></span>
-    <button data-a="undo" title="되돌리기">↶</button>
-    <button data-a="redo" title="다시 실행">↷</button>
+    <button data-a="undo" title="되돌리기 (Ctrl+Z)">↶</button>
+    <button data-a="redo" title="다시 실행 (Ctrl+Y)">↷</button>
   </div>
   <div id="pal"></div>
   <div class="msg" id="edMsg"></div>
@@ -243,11 +243,14 @@ async function download() {
   return { id, data };
 }
 async function upload(id, obj) {
-  await api(`${UPLOAD}/files/${id}?uploadType=media`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
+  const r = await api(`${UPLOAD}/files/${id}?uploadType=media&fields=modifiedTime`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
+  try { S.mod = (await r.json()).modifiedTime || S.mod; } catch (_) {}
 }
 /* 저장은 항상 [Drive에서 최신본 받기 → 이 인덱스만 고치기 → 올리기]. 다른 기기에서 고친 다른 인덱스를 덮어쓰지 않는다. */
 let chain = Promise.resolve();
+let pending = 0;
 function commit(mutator) {
+  pending++;
   const job = chain.then(async () => {
     const r = await download();
     if (!r) throw new Error("Drive에 MEDex 메모가 아직 없어요. PC의 MEDex에서 먼저 로그인해 주세요.");
@@ -259,6 +262,7 @@ function commit(mutator) {
     return r.data;
   });
   chain = job.catch(() => {});
+  job.then(() => { pending--; }, () => { pending--; });
   return job;
 }
 
@@ -297,7 +301,7 @@ async function refreshList(quiet) {
   try {
     const r = await download();
     if (!r) { say("#listMsg", "Drive에 MEDex 메모가 아직 없어요. PC의 MEDex에서 먼저 로그인해 주세요.", true); S.data = { notes: [] }; renderList(); return; }
-    S.fileId = r.id; S.data = r.data; renderList();
+    S.fileId = r.id; S.data = r.data; renderList(); try { S.mod = (await (await api(`${DRIVE}/files/${r.id}?fields=modifiedTime`)).json()).modifiedTime; } catch (_) {}
     say("#listMsg", (accountEmail ? accountEmail + " · " : "") + "인덱스 " + r.data.notes.length + "개");
     purgeExpired();
   } catch (e) { say("#listMsg", e.message, true); }
@@ -541,6 +545,20 @@ async function saveNow(auto) {
   finally { saving = false; }
 }
 $("#btnSave").onclick = () => saveNow(false);
+/* ===== 키보드 단축키 (블루투스 키보드용, PC와 같은 조합. 아이폰/맥은 Cmd도 가능) ===== */
+function doFormat(cmd) { body.focus(); document.execCommand("styleWithCSS", false, true); document.execCommand(cmd); markDirty(); }
+function doUndoRedo(cmd) { body.focus(); document.execCommand(cmd); ensureSentinel(); updateStrike(); markDirty(); }
+document.addEventListener("keydown", e => {
+  if (!$("#editor").classList.contains("on") || document.querySelector("dialog[open]")) return;
+  const k = e.key.toLowerCase();
+  if (e.key === "Escape") { e.preventDefault(); $("#btnBack").click(); return; }  // PC: Esc = 메모창 접기
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (k === "s" && !e.shiftKey) { e.preventDefault(); saveNow(false); }                   // Ctrl+S 저장/동기화
+  else if (k === "b" && !e.shiftKey) { e.preventDefault(); doFormat("bold"); }            // Ctrl+B 굵게
+  else if (k === "u" && !e.shiftKey) { e.preventDefault(); doFormat("underline"); }       // Ctrl+U 밑줄
+  else if (k === "z" && !e.shiftKey) { e.preventDefault(); doUndoRedo("undo"); }          // Ctrl+Z 되돌리기
+  else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); doUndoRedo("redo"); }  // Ctrl+Y / Ctrl+Shift+Z 다시 실행
+});
 $("#title").addEventListener("input", markDirty);
 async function leaveEditor(fromSystem) {
   if (dirty) await saveNow(false);
@@ -782,6 +800,62 @@ $("#btnAdd").onclick = async () => {
   finally { busy(false); }
 };
 $("#btnRefresh").onclick = () => refreshList(false);
+
+/* ===== 다른 기기(PC 등)의 변경을 5초 안에 반영 ===== */
+let polling = false;
+function caretOffset() {
+  const s = getSelection(); if (!s.rangeCount || !body.contains(s.anchorNode)) return null;
+  const r = document.createRange(); r.selectNodeContents(body); r.setEnd(s.anchorNode, s.anchorOffset); return r.toString().length;
+}
+function setCaretOffset(off) {
+  const w = document.createTreeWalker(body, NodeFilter.SHOW_TEXT); let n, left = off;
+  while ((n = w.nextNode())) { if (left <= n.data.length) { const r = document.createRange(); r.setStart(n, left); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return; } left -= n.data.length; }
+}
+async function applyRemote(nd) {
+  const st = document.querySelector(".screen.on").id;
+  S.data = nd;
+  if (st === "listScr") { renderList(); say("#listMsg", (accountEmail ? accountEmail + " · " : "") + "다른 기기의 변경을 불러왔어요"); }
+  else if (st === "setScr") renderSettings();
+  else if (st === "trashScr") renderTrash();
+  else if (st === "editor" && S.cur) {
+    const i = findNote(nd, S.cur.ref);
+    const leave = msg => { S.cur = null; dirty = false; show("listScr"); renderList(); say("#listMsg", msg, true); };
+    if (i < 0) return leave("다른 기기에서 이 인덱스가 바뀌거나 삭제됐어요");
+    const n = nd.notes[i];
+    let text = n.text || "", fmt = n.fmt, fsig = n.fsig;
+    if (S.cur.salt || validPw(n.pw)) {
+      if (!S.cur.key || !validPw(n.pw) || n.pw.s !== S.cur.salt) return leave("다른 기기에서 암호가 바뀌었어요. 다시 열어 주세요");
+      if (validEnc(n.enc)) { const p = await decryptPayload(S.cur.key, n.enc); text = p.text || ""; fmt = p.fmt; fsig = p.fsig; }
+    }
+    const runs = fmt && fsig === crc32(text) ? fmt : [];
+    if (dirty) return;  // 그 사이 입력을 시작했으면 건드리지 않는다
+    S.cur.ref = { idx: i, title: n.title, color: n.color };
+    if (document.activeElement !== $("#title")) $("#title").value = n.title;
+    $("#editor").style.setProperty("--tint", tint(n.color || "#F2C94C"));
+    const now = serialize();
+    if (now.text !== text || JSON.stringify(now.runs) !== JSON.stringify(runs)) {
+      const off = caretOffset(), top = body.scrollTop;
+      renderBody(text, runs);
+      if (off !== null) setCaretOffset(Math.min(off, text.length));
+      body.scrollTop = top; say("#edMsg", "다른 기기의 변경을 불러왔어요");
+    } else updateStrike();
+  }
+}
+async function pollRemote() {
+  if (polling || !token || !S.data || !S.fileId || document.hidden || pending || saving || dirty || document.querySelector("dialog[open]") || $("#spin").classList.contains("on")) return;
+  polling = true;
+  try {
+    const m = await (await api(`${DRIVE}/files/${S.fileId}?fields=modifiedTime`)).json();
+    if (m.modifiedTime === S.mod) return;
+    const r = await download(); if (!r) return;
+    S.mod = m.modifiedTime;
+    if (pending || saving || dirty) return;
+    if ((r.data.updated || 0) > (S.data.updated || 0) + 0.0005) { S.fileId = r.id; await applyRemote(r.data); }
+  } catch (_) {} finally { polling = false; }
+}
+setInterval(pollRemote, 5000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollRemote(); });
+window.addEventListener("online", pollRemote);
 
 /* ===== 로그인 / 로그아웃 ===== */
 async function afterLogin() {
