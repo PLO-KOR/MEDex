@@ -651,8 +651,21 @@ $("#btnSave").onclick = () => saveNow(false);
 /* ===== 키보드 단축키 (블루투스 키보드용, PC와 같은 조합. 아이폰/맥은 Cmd도 가능) ===== */
 function doFormat(cmd) { body.focus(); document.execCommand("styleWithCSS", false, true); document.execCommand(cmd); markDirty(); }
 function doUndoRedo(cmd) { body.focus(); document.execCommand(cmd); ensureSentinel(); updateStrike(); markDirty(); }
+async function manualRefresh() {  // PC의 Ctrl+F5(새로고침/불러오기)와 같은 동작
+  if (!S.data || $("#spin").classList.contains("on")) return;
+  const editing = $("#editor").classList.contains("on");
+  if (editing && dirty && !(await ask("저장하지 않은 변경이 있어요.\n불러오면 이 변경은 사라져요. 계속할까요?", { noInput: true }))) return;
+  if (editing) dirty = false;
+  if (!editing) return refreshList(false);
+  busy(true);
+  try { const r = await download(); if (r) { S.fileId = r.id; await applyRemote(r.data); try { S.mod = (await (await api(`${DRIVE}/files/${r.id}?fields=modifiedTime`)).json()).modifiedTime; } catch (_) {} say("#edMsg", "Google에서 불러왔어요"); } }
+  catch (err) { say("#edMsg", "불러오기 실패: " + (err.message || err), true); }
+  finally { busy(false); }
+}
 document.addEventListener("keydown", e => {
-  if (!$("#editor").classList.contains("on") || document.querySelector("dialog[open]")) return;
+  if (document.querySelector("dialog[open]")) return;
+  if (e.key === "F5" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && S.data) { e.preventDefault(); manualRefresh(); return; }  // Ctrl+F5 새로고침(불러오기)
+  if (!$("#editor").classList.contains("on")) return;
   const k = e.key.toLowerCase();
   if (e.key === "Escape") { e.preventDefault(); $("#btnBack").click(); return; }  // PC: Esc = 메모창 접기
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -661,6 +674,8 @@ document.addEventListener("keydown", e => {
   else if (k === "u" && !e.shiftKey) { e.preventDefault(); doFormat("underline"); }       // Ctrl+U 밑줄
   else if (k === "z" && !e.shiftKey) { e.preventDefault(); doUndoRedo("undo"); }          // Ctrl+Z 되돌리기
   else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); doUndoRedo("redo"); }  // Ctrl+Y / Ctrl+Shift+Z 다시 실행
+  else if (k === "p" && !e.shiftKey) { e.preventDefault(); say("#edMsg", "Ctrl+P(메모창 고정)는 PC 전용이에요. 웹에서는 필요 없어요"); }
+  else if (e.key === "ArrowRight" && !e.shiftKey) { e.preventDefault(); $("#btnBack").click(); }  // Ctrl+→ 메모창 접기 (목록으로)
 });
 $("#title").addEventListener("input", markDirty);
 async function leaveEditor(fromSystem) {
@@ -821,7 +836,7 @@ async function setSetting(patch) {
   try { await commit(d => Object.assign(d, patch)); } catch (e) { say("#setMsg", e.message, true); }
   renderSettings(); updateStrike();
 }
-const M_VERSION = "1.0.2", M_UPDATED = "2026. 11. 19.", CONTACT = "emailofplo@gmail.com";
+const M_VERSION = "1.0.3", M_UPDATED = "2026. 11. 19.", CONTACT = "emailofplo@gmail.com";
 const SET_CATS = [["gen", "일반"], ["ui", "UI"], ["save", "저장"], ["trash", "휴지통"], ["info", "정보"]];
 let setCat = "gen";
 function renderSettings() {
