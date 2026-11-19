@@ -456,7 +456,6 @@ body.addEventListener("copy", e => copySelection(e, false));
 body.addEventListener("cut", e => copySelection(e, true));
 function pasteRich(clip) {
   const r = selRange(); if (!r) return false;
-  r.deleteContents();
   const frag = document.createDocumentFragment();
   let pos = 0;
   for (const [a, b, f, c] of clip.runs) {
@@ -464,6 +463,14 @@ function pasteRich(clip) {
     frag.append(makeSpan(clip.text.slice(a, b), f, c || "")); pos = b;
   }
   if (pos < clip.text.length) frag.append(document.createTextNode(clip.text.slice(pos)));
+  // 서식이 없는 자리에 붙이는 경우는 브라우저 기록에 남겨서 Ctrl+Z 로 되돌릴 수 있게 한다
+  let plain = true; for (let n = r.startContainer; n && n !== body; n = n.parentNode) if (n.nodeType === 1 && n.getAttribute("style")) plain = false;
+  if (plain) {
+    const d = document.createElement("div"); d.append(frag.cloneNode(true));
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    if (document.execCommand("insertHTML", false, d.innerHTML)) { ensureSentinel(); updateStrike(); markDirty(); return true; }
+  }
+  r.deleteContents();
   const last = frag.lastChild; if (!last) return false;
   const n = r.startContainer;
   if (n === body) { r.insertNode(frag); }
@@ -508,21 +515,28 @@ function boxAt(x, y) {
   }
   return null;
 }
+/* 직접 고친 내용도 Ctrl+Z / Ctrl+Y 로 되돌릴 수 있게, 브라우저의 되돌리기 기록에 남도록 insertHTML 로 넣는다 */
+function insertNodes(r, frag) {
+  let top = frag, n = r.commonAncestorContainer;  // 굵게/밑줄/크기 같은 바깥 서식도 함께 넣어야 그대로 남는다
+  while (n && n !== body) { if (n.nodeType === 1) { const c = n.cloneNode(false); c.append(top); top = c; } n = n.parentNode; }
+  const d = document.createElement("div"); d.append(top);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  if (!document.execCommand("insertHTML", false, d.innerHTML)) { r.deleteContents(); r.insertNode(frag); return false; }
+  return true;
+}
 function selRange() { const s = getSelection(); return s.rangeCount && body.contains(s.anchorNode) ? s.getRangeAt(0) : null; }
 function setSize(level) {
   const r = selRange(); if (!r) return;
   const sp = document.createElement("span");
   if (level) { sp.dataset.sz = level; sp.style.fontSize = level < 0 ? "0.6667em" : "1.5em"; } else { sp.dataset.sz = 0; sp.style.fontSize = "1em"; }
   if (r.collapsed) {
-    sp.textContent = "​"; r.insertNode(sp);
+    sp.textContent = "\u200b"; r.insertNode(sp);
     const g = document.createRange(); g.setStart(sp.firstChild, 1); g.collapse(true);
     const s = getSelection(); s.removeAllRanges(); s.addRange(g);
   } else {
-    const frag = r.extractContents();
+    const frag = r.cloneContents();
     frag.querySelectorAll("[data-sz]").forEach(e => { e.removeAttribute("data-sz"); e.style.fontSize = ""; });
-    sp.append(frag); r.insertNode(sp);
-    const g = document.createRange(); g.selectNodeContents(sp);
-    const s = getSelection(); s.removeAllRanges(); s.addRange(g);
+    sp.append(frag); insertNodes(r, sp);
   }
   markDirty();
 }
@@ -544,11 +558,9 @@ function colorRange(r, c) {  // execCommand 대신 직접 감싼다 (글자 크�
     const g = document.createRange(); g.setStart(sp.firstChild, 1); g.collapse(true);
     const s = getSelection(); s.removeAllRanges(); s.addRange(g); return;
   }
-  const frag = r.extractContents();
+  const frag = r.cloneContents();
   frag.querySelectorAll("span").forEach(e => { e.style.color = ""; });
-  sp.append(frag); r.insertNode(sp);
-  const g = document.createRange(); g.selectNodeContents(sp);
-  const s = getSelection(); s.removeAllRanges(); s.addRange(g);
+  sp.append(frag); insertNodes(r, sp);
 }
 function setColor(c) {
   body.focus();
@@ -836,7 +848,7 @@ async function setSetting(patch) {
   try { await commit(d => Object.assign(d, patch)); } catch (e) { say("#setMsg", e.message, true); }
   renderSettings(); updateStrike();
 }
-const M_VERSION = "1.0.3", M_UPDATED = "2026. 11. 19.", CONTACT = "emailofplo@gmail.com";
+const M_VERSION = "1.0.4", M_UPDATED = "2026. 11. 19.", CONTACT = "emailofplo@gmail.com";
 const SET_CATS = [["gen", "일반"], ["ui", "UI"], ["save", "저장"], ["trash", "휴지통"], ["info", "정보"]];
 let setCat = "gen";
 function renderSettings() {
