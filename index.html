@@ -354,7 +354,7 @@ function rgbHex(c) {
   if (m) return "#" + [m[1], m[2], m[3]].map(v => (+v).toString(16).padStart(2, "0")).join("");
   return /^#[0-9a-f]{6}$/.test(c) ? c : "";
 }
-function serialize() {
+function serialize(root = body) {
   let text = "", runs = [];
   const emit = (s, st) => {
     s = s.replace(/\r/g, "").replace(/​/g, "").replace(/ /g, " ");
@@ -392,7 +392,7 @@ function serialize() {
       } else walk(ch, ns);
     }
   };
-  walk(body, { b: false, u: false, sz: 0, col: "" });
+  walk(root, { b: false, u: false, sz: 0, col: "" });
   return { text, runs };
 }
 
@@ -429,9 +429,53 @@ body.addEventListener("beforeinput", e => {
   else if (e.inputType === "insertFromPaste" || e.inputType === "insertFromDrop") {
     e.preventDefault();
     const t = e.dataTransfer ? e.dataTransfer.getData("text/plain") : "";
-    if (t) document.execCommand("insertText", false, t.replace(/\r\n?/g, "\n"));
+    const tt = t.replace(/\r\n?/g, "\n");
+    if (!tt) return;
+    if (e.inputType === "insertFromPaste" && memoClip && memoClip.text === tt && pasteRich(memoClip)) return;  // 메모 안에서 복사한 글자는 서식까지 붙여넣는다
+    document.execCommand("insertText", false, tt);
   }
 });
+/* 메모 안에서 복사/잘라내기 한 글자는 서식(굵게·밑줄·크기·색)을 함께 기억했다가 붙여넣을 때 되살린다 */
+let memoClip = null;
+function textOffset(node, off) {
+  const r = document.createRange(); r.setStart(body, 0); r.setEnd(node, off);
+  const d = document.createElement("div"); d.append(r.cloneContents());
+  return serialize(d).text.length;
+}
+function copySelection(e, cut) {
+  const r = selRange(); if (!r || r.collapsed) return;
+  const full = serialize(), a = textOffset(r.startContainer, r.startOffset), b = textOffset(r.endContainer, r.endOffset);
+  const text = full.text.slice(a, b); if (!text) return;
+  const runs = [];
+  for (const q of full.runs) { const x = Math.max(q[0], a), y = Math.min(q[1], b); if (y > x) runs.push(q.length > 3 ? [x - a, y - a, q[2], q[3]] : [x - a, y - a, q[2]]); }
+  memoClip = { text, runs };
+  e.clipboardData.setData("text/plain", text); e.preventDefault();
+  if (cut) { document.execCommand("delete"); }
+}
+body.addEventListener("copy", e => copySelection(e, false));
+body.addEventListener("cut", e => copySelection(e, true));
+function pasteRich(clip) {
+  const r = selRange(); if (!r) return false;
+  r.deleteContents();
+  const frag = document.createDocumentFragment();
+  let pos = 0;
+  for (const [a, b, f, c] of clip.runs) {
+    if (a > pos) frag.append(document.createTextNode(clip.text.slice(pos, a)));
+    frag.append(makeSpan(clip.text.slice(a, b), f, c || "")); pos = b;
+  }
+  if (pos < clip.text.length) frag.append(document.createTextNode(clip.text.slice(pos)));
+  const last = frag.lastChild; if (!last) return false;
+  const n = r.startContainer;
+  if (n === body) { r.insertNode(frag); }
+  else {  // 굵게/색 등이 걸린 글자 안에 붙여도 그 서식이 번지지 않도록, 바깥 단계까지 쪼갠 뒤 그 사이에 넣는다
+    let top = n; while (top.parentNode !== body) top = top.parentNode;
+    const t = document.createRange(); t.setStart(n, r.startOffset); t.setEndAfter(top);
+    const tail = t.extractContents(); top.after(tail); top.after(frag);
+  }
+  const g = document.createRange(); g.setStartAfter(last); g.collapse(true);
+  const sl = getSelection(); sl.removeAllRanges(); sl.addRange(g);
+  ensureSentinel(); updateStrike(); markDirty(); return true;
+}
 body.addEventListener("input", () => { ensureSentinel(); updateStrike(); markDirty(); });
 /* 체크박스를 누르면 글자 입력 커서/키보드가 뜨지 않고 체크만 바뀐다 (터치는 touchend에서 처리하고 기본 동작을 막아 포커스를 주지 않는다) */
 function toggleBox(hit) { hit.node.replaceData(hit.off, 1, hit.node.data[hit.off] === BOX_ON ? BOX_OFF : BOX_ON); updateStrike(); markDirty(); }
@@ -482,7 +526,22 @@ function setSize(level) {
   }
   markDirty();
 }
-function setColor(c) { body.focus(); document.execCommand("styleWithCSS", false, true); document.execCommand("foreColor", false, c); $("#colA").style.borderBottomColor = c; $("#pal").classList.remove("on"); markDirty(); }
+/* 색 목록을 누르는 순간 선택 영역이 풀리는 기기가 있어서, 누르기 직전의 선택을 기억했다가 되돌린 뒤 색을 적용한다 */
+let palRange = null;
+function snapRange(fresh) {
+  const r = selRange();
+  if (fresh === true) { palRange = r ? r.cloneRange() : null; return; }  // 색 버튼을 누를 때: 지금 선택(없으면 없음)
+  if (r && (!r.collapsed || !palRange || palRange.collapsed)) palRange = r.cloneRange();  // 색을 고를 때: 이미 기억한 선택을 커서 하나로 덮어쓰지 않는다
+}
+function setColor(c) {
+  body.focus();
+  if (palRange) { const s = getSelection(); s.removeAllRanges(); s.addRange(palRange); }
+  document.execCommand("styleWithCSS", false, true); document.execCommand("foreColor", false, c);
+  palRange = null;
+  $("#colA").style.borderBottomColor = c; $("#pal").classList.remove("on"); updateStrike(); markDirty();
+}
+for (const ev of ["touchstart", "mousedown", "pointerdown"]) $("#pal").addEventListener(ev, snapRange, { capture: true, passive: true });
+$("#pal").addEventListener("mousedown", e => e.preventDefault());
 $("#pal").append(...SWATCH.map(c => { const i = document.createElement("i"); i.style.background = c; i.onclick = () => setColor(c); return i; }));
 $("#tools").addEventListener("mousedown", e => e.preventDefault());
 $("#tools").addEventListener("click", e => {
@@ -491,7 +550,7 @@ $("#tools").addEventListener("click", e => {
   if (a === "small") setSize(-1); else if (a === "normal") setSize(0); else if (a === "large") setSize(1);
   else if (a === "bold") { document.execCommand("styleWithCSS", false, true); document.execCommand("bold"); markDirty(); }
   else if (a === "underline") { document.execCommand("styleWithCSS", false, true); document.execCommand("underline"); markDirty(); }
-  else if (a === "color") $("#pal").classList.toggle("on");
+  else if (a === "color") { snapRange(true); $("#pal").classList.toggle("on"); }
   else if (a === "box") { document.execCommand("insertText", false, BOX_OFF + " "); updateStrike(); markDirty(); }
   else if (a === "undo") { document.execCommand("undo"); ensureSentinel(); updateStrike(); markDirty(); }
   else if (a === "redo") { document.execCommand("redo"); ensureSentinel(); updateStrike(); markDirty(); }
@@ -744,7 +803,7 @@ async function setSetting(patch) {
   try { await commit(d => Object.assign(d, patch)); } catch (e) { say("#setMsg", e.message, true); }
   renderSettings(); updateStrike();
 }
-const M_VERSION = "1.0.0", M_UPDATED = "2026. 11. 16.", CONTACT = "emailofplo@gmail.com";
+const M_VERSION = "1.0.1", M_UPDATED = "2026. 11. 19.", CONTACT = "emailofplo@gmail.com";
 const SET_CATS = [["gen", "일반"], ["ui", "UI"], ["save", "저장"], ["trash", "휴지통"], ["info", "정보"]];
 let setCat = "gen";
 function renderSettings() {
