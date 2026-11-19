@@ -526,18 +526,36 @@ function setSize(level) {
   }
   markDirty();
 }
-/* 색 목록을 누르는 순간 선택 영역이 풀리는 기기가 있어서, 누르기 직전의 선택을 기억했다가 되돌린 뒤 색을 적용한다 */
-let palRange = null;
-function snapRange(fresh) {
+/* 색 목록을 누르는 순간 선택 영역이 풀리는 기기가 있어서, 선택을 여러 방법으로 기억해 둔다:
+   (1) 색 버튼/색 목록을 누르기 직전의 선택, (2) 선택이 바뀔 때마다 마지막으로 선택된 범위(메모 본문을 직접 누르면 잊는다) */
+let palRange = null, lastSel = null;
+function snapRange() {
   const r = selRange();
-  if (fresh === true) { palRange = r ? r.cloneRange() : null; return; }  // 색 버튼을 누를 때: 지금 선택(없으면 없음)
   if (r && (!r.collapsed || !palRange || palRange.collapsed)) palRange = r.cloneRange();  // 색을 고를 때: 이미 기억한 선택을 커서 하나로 덮어쓰지 않는다
+}
+document.addEventListener("selectionchange", () => { const r = selRange(); if (r && !r.collapsed) lastSel = r.cloneRange(); });
+for (const ev of ["pointerdown", "touchstart", "mousedown"]) body.addEventListener(ev, () => { lastSel = null; palRange = null; }, { passive: true });
+$("#tools").addEventListener("touchstart", e => { if (e.target.closest('[data-a="color"]')) snapRange(true); }, { capture: true, passive: true });
+const alive = r => r && body.contains(r.startContainer) && body.contains(r.endContainer);
+function colorRange(r, c) {  // execCommand 대신 직접 감싼다 (글자 크기와 같은 방식)
+  const sp = document.createElement("span"); sp.style.color = c;
+  if (r.collapsed) {
+    sp.textContent = "\u200b"; r.insertNode(sp);
+    const g = document.createRange(); g.setStart(sp.firstChild, 1); g.collapse(true);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(g); return;
+  }
+  const frag = r.extractContents();
+  frag.querySelectorAll("span").forEach(e => { e.style.color = ""; });
+  sp.append(frag); r.insertNode(sp);
+  const g = document.createRange(); g.selectNodeContents(sp);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(g);
 }
 function setColor(c) {
   body.focus();
-  if (palRange) { const s = getSelection(); s.removeAllRanges(); s.addRange(palRange); }
-  document.execCommand("styleWithCSS", false, true); document.execCommand("foreColor", false, c);
-  palRange = null;
+  const cur = selRange();
+  let r = cur && !cur.collapsed ? cur : alive(palRange) && !palRange.collapsed ? palRange : alive(lastSel) ? lastSel : cur || (alive(palRange) ? palRange : null);
+  if (r) { r = r.cloneRange(); colorRange(r, c); }
+  palRange = null; lastSel = null;
   $("#colA").style.borderBottomColor = c; $("#pal").classList.remove("on"); updateStrike(); markDirty();
 }
 for (const ev of ["touchstart", "mousedown", "pointerdown"]) $("#pal").addEventListener(ev, snapRange, { capture: true, passive: true });
@@ -803,7 +821,7 @@ async function setSetting(patch) {
   try { await commit(d => Object.assign(d, patch)); } catch (e) { say("#setMsg", e.message, true); }
   renderSettings(); updateStrike();
 }
-const M_VERSION = "1.0.1", M_UPDATED = "2026. 11. 19.", CONTACT = "emailofplo@gmail.com";
+const M_VERSION = "1.0.2", M_UPDATED = "2026. 11. 19.", CONTACT = "emailofplo@gmail.com";
 const SET_CATS = [["gen", "일반"], ["ui", "UI"], ["save", "저장"], ["trash", "휴지통"], ["info", "정보"]];
 let setCat = "gen";
 function renderSettings() {
